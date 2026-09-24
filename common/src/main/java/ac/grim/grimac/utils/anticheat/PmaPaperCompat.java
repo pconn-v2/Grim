@@ -67,11 +67,11 @@ public final class PmaPaperCompat {
 
         private static @Nullable Bridge resolve() {
             try {
-                Class<?> combatHistory = Class.forName("org.pmapaper.pvp.CombatHistory");
-                Method enabled = combatHistory.getMethod("anticheatHitRewindEnabled");
+                Class<?> combatHistory = Class.forName("org.pmapaper.pvp.AnticheatCombatBridge");
+                Method enabled = combatHistory.getMethod("hitRewindEnabled");
                 Method latest = null;
                 for (Method method : combatHistory.getMethods()) {
-                    if (method.getName().equals("anticheatLatestRewindRescue") && method.getParameterCount() == 1) {
+                    if (method.getName().equals("latestHitRewindRescue") && method.getParameterCount() == 1) {
                         latest = method;
                         break;
                     }
