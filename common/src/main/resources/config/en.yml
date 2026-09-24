@@ -173,6 +173,10 @@ Reach:
     # Should we cancel hits that we know are impossible?
     # 3.00-3.03 hits may go through but still be flagged, due to packet order limitations
     block-impossible-hits: true
+    # PmaPaper only: honor the server-authoritative hit-rewind result for player-vs-player attacks.
+    # Requires a PmaPaper build exposing CombatHistory's read-only anticheat rewind marker.
+    # This does not widen Reach globally; only attacks actually rescued by PmaPaper are exempted.
+    pmapaper-rewind-compat: true
     # This will send an additional packet at the end of every tick to increase the likelihood of catching cheats
     # This injects into server's connection list to send a final packet just before the server flushes
     # Enabling this will increase bandwidth usage for all players
