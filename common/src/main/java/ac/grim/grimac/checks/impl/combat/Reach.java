@@ -72,6 +72,7 @@ public class Reach extends Check implements PacketReceiveListener {
     private final Int2ObjectMap<DeferredPmaReach> deferredPmaReachChecks = new Int2ObjectOpenHashMap<>();
     private boolean cancelImpossibleHits;
     private boolean pmaPaperRewindCompat;
+    private long lastConsumedPmaRewindSequence = -1L;
     private double threshold;
     private double cancelBuffer; // For the next 4 hits after using reach, we aggressively cancel reach
 
@@ -265,7 +266,7 @@ public class Reach extends Check implements PacketReceiveListener {
                     ReachFlagData flagData = createReachFlagData(reachEntity, result);
                     if (pmaPaperCandidate) {
                         UUID targetUuid = reachEntity.getUuid();
-                        if (!PmaPaperCompat.wasRewindRescuedAfter(player, targetUuid, interactionData.attackNanos)) {
+                        if (!consumePmaPaperRewindRescue(targetUuid, interactionData.attackNanos)) {
                             // PacketEvents observes the attack before PmaPaper's main-thread
                             // range decision. Delay only this suspicious Reach result by one
                             // movement update so the read-only rescue marker can become visible.
@@ -294,11 +295,20 @@ public class Reach extends Check implements PacketReceiveListener {
 
     private void processDeferredPmaReachChecks() {
         for (DeferredPmaReach deferred : deferredPmaReachChecks.values()) {
-            if (!PmaPaperCompat.wasRewindRescuedAfter(player, deferred.targetUuid, deferred.attackNanos)) {
+            if (!consumePmaPaperRewindRescue(deferred.targetUuid, deferred.attackNanos)) {
                 flagReach(deferred.flagData);
             }
         }
         deferredPmaReachChecks.clear();
+    }
+
+    private boolean consumePmaPaperRewindRescue(UUID targetUuid, long attackNanos) {
+        long sequence = PmaPaperCompat.matchingRewindRescueSequenceAfter(player, targetUuid, attackNanos);
+        if (sequence <= lastConsumedPmaRewindSequence) {
+            return false;
+        }
+        lastConsumedPmaRewindSequence = sequence;
+        return true;
     }
 
     private boolean isPmaPaperReachCandidate(PacketEntity reachEntity, InteractionData interactionData) {
