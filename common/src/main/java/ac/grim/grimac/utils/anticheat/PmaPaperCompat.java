@@ -32,19 +32,19 @@ public final class PmaPaperCompat {
         return bridge != null && bridge.isHitRewindEnabled();
     }
 
-    public static boolean wasRewindRescuedAfter(GrimPlayer player, @Nullable UUID targetUuid, long attackNanos) {
+    public static long matchingRewindRescueSequenceAfter(GrimPlayer player, @Nullable UUID targetUuid, long attackNanos) {
         Bridge bridge = BRIDGE;
         if (bridge == null || targetUuid == null || attackNanos == Long.MIN_VALUE || player.platformPlayer == null) {
-            return false;
+            return -1L;
         }
 
         RewindMarker marker = bridge.latestMarker(player);
         if (marker == null || !targetUuid.equals(marker.targetUuid()) || marker.nanoTime() < attackNanos) {
-            return false;
+            return -1L;
         }
 
         long age = System.nanoTime() - marker.nanoTime();
-        return age >= 0L && age <= MAX_RESCUE_AGE_NANOS;
+        return age >= 0L && age <= MAX_RESCUE_AGE_NANOS ? marker.sequence() : -1L;
     }
 
     private record RewindMarker(long sequence, UUID targetUuid, long nanoTime) {
