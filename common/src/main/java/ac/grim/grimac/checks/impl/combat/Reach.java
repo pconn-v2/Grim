@@ -21,6 +21,7 @@ import ac.grim.grimac.checks.Check;
 import ac.grim.grimac.checks.CheckData;
 import ac.grim.grimac.checks.type.PacketReceiveListener;
 import ac.grim.grimac.player.GrimPlayer;
+import ac.grim.grimac.utils.anticheat.PmaPaperCompat;
 import ac.grim.grimac.utils.collisions.datatypes.SimpleCollisionBox;
 import ac.grim.grimac.utils.data.packetentity.PacketEntity;
 import ac.grim.grimac.utils.data.packetentity.PacketEntitySizeable;
@@ -53,6 +54,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 // You may not copy the check unless you are licensed under GPL
 @CheckData(name = "Reach", stableKey = "grim.combat.reach", description = "Attacked an entity from too far away")
@@ -67,7 +69,11 @@ public class Reach extends Check implements PacketReceiveListener {
     // Only one flag per reach attack, per entity, per tick.
     // We store position because lastX isn't reliable on teleports.
     private final Int2ObjectMap<InteractionData> playerAttackQueue = new Int2ObjectOpenHashMap<>();
+    private final List<DeferredPmaReach> deferredPmaReachChecks = new ArrayList<>();
     private boolean cancelImpossibleHits;
+    private boolean pmaPaperRewindCompat;
+    private int pmaPaperRewindWaitUpdates = 2;
+    private long lastConsumedPmaRewindSequence = -1L;
     private double threshold;
     private double cancelBuffer; // For the next 4 hits after using reach, we aggressively cancel reach
 
@@ -128,6 +134,12 @@ public class Reach extends Check implements PacketReceiveListener {
         if (player.inVehicle()) return;
         if (entity.riding != null) return;
 
+        boolean pmaPaperPlayerTarget = pmaPaperRewindCompat
+                && entity.getType() == EntityTypes.PLAYER
+                && entity.getUuid() != null
+                && PmaPaperCompat.isAvailable();
+        long attackNanos = pmaPaperPlayerTarget ? System.nanoTime() : Long.MIN_VALUE;
+
         ItemStack currentStack = player.inventory.getItemInHand(hand);
         ItemStack startStack = player.inventory.getStartOfTickStack();
 
@@ -184,11 +196,18 @@ public class Reach extends Check implements PacketReceiveListener {
         if (!tooManyAttacks) {
             playerAttackQueue.put(entityId, new InteractionData(
                     player.x, player.y, player.z,
-                    hasRange, maxReach, hitboxMargin, attackRangeMovement
+                    hasRange, maxReach, hitboxMargin, attackRangeMovement,
+                    attackNanos
             )); // Queue for next tick for very precise check
         }
 
-        boolean knownInvalid = attackRangeMovement == null && isKnownInvalid(entity, hasRange, maxReach, hitboxMargin);
+        // PmaPaper may intentionally accept an otherwise-current-position-invalid PvP hit
+        // against a bounded historical victim box. Do not cancel that packet before the
+        // server gets a chance to make its authoritative rewind decision.
+        boolean pmaPaperMayRewind = pmaPaperPlayerTarget && PmaPaperCompat.isHitRewindEnabled();
+        boolean knownInvalid = !pmaPaperMayRewind
+                && attackRangeMovement == null
+                && isKnownInvalid(entity, hasRange, maxReach, hitboxMargin);
 
         if ((shouldModifyPackets() && cancelImpossibleHits && knownInvalid) || tooManyAttacks) {
             event.setCancelled(true);
@@ -226,22 +245,43 @@ public class Reach extends Check implements PacketReceiveListener {
     }
 
     private void tickBetterReachCheckWithAngle() {
+        processDeferredPmaReachChecks();
+
         for (Int2ObjectMap.Entry<InteractionData> attack : playerAttackQueue.int2ObjectEntrySet()) {
             PacketEntity reachEntity = player.compensatedEntities.entityMap.get(attack.getIntKey());
             if (reachEntity == null) continue;
 
             InteractionData interactionData = attack.getValue();
+            boolean pmaPaperCandidate = isPmaPaperReachCandidate(reachEntity, interactionData);
+            double previousCancelBuffer = cancelBuffer;
             CheckResult result = checkReach(reachEntity, interactionData.x, interactionData.y, interactionData.z, interactionData.hasAttackRange, interactionData.maxReach, interactionData.hitboxMargin, interactionData.attackRangeMovement, false);
+
+            // A PmaPaper-rewound hit should not prime Grim's aggressive follow-up reach
+            // cancellation buffer. The server still rejects genuinely impossible hits.
+            if (pmaPaperCandidate && result.type() == ResultType.REACH) {
+                cancelBuffer = previousCancelBuffer;
+            }
+
             switch (result.type()) {
-                case REACH -> flag(
-                        V.write(verbose()).f64(result.minDistance()).uint(Math.max(0, reachEntity.getType().getId(PacketEvents.getAPI().getServerManager().getVersion().toClientVersion()))),
-                        () -> {
-                            String added = ", type=" + reachEntity.getType().getName().getKey();
-                            if (reachEntity instanceof PacketEntitySizeable sizeable) {
-                                added += ", size=" + sizeable.size;
-                            }
-                            return result.verbose() + added;
-                        });
+                case REACH -> {
+                    ReachFlagData flagData = createReachFlagData(reachEntity, result);
+                    if (pmaPaperCandidate) {
+                        UUID targetUuid = reachEntity.getUuid();
+                        if (!consumePmaPaperRewindRescue(targetUuid, interactionData.attackNanos)) {
+                            // PacketEvents observes the attack before PmaPaper's main-thread
+                            // range decision. Keep each suspicious attack independently so rapid
+                            // follow-up hits cannot overwrite an older deferred verdict.
+                            deferredPmaReachChecks.add(new DeferredPmaReach(
+                                    targetUuid,
+                                    interactionData.attackNanos,
+                                    flagData,
+                                    pmaPaperRewindWaitUpdates
+                            ));
+                        }
+                    } else {
+                        flagReach(flagData);
+                    }
+                }
                 case HITBOX -> {
                     String added = "type=" + reachEntity.getType().getName().getKey();
                     if (reachEntity instanceof PacketEntitySizeable sizeable) {
@@ -253,6 +293,64 @@ public class Reach extends Check implements PacketReceiveListener {
         }
 
         playerAttackQueue.clear();
+    }
+
+    private void processDeferredPmaReachChecks() {
+        List<DeferredPmaReach> remaining = new ArrayList<>(deferredPmaReachChecks.size());
+        for (DeferredPmaReach deferred : deferredPmaReachChecks) {
+            if (consumePmaPaperRewindRescue(deferred.targetUuid(), deferred.attackNanos())) {
+                continue;
+            }
+
+            if (deferred.remainingUpdates() <= 1) {
+                flagReach(deferred.flagData());
+            } else {
+                remaining.add(new DeferredPmaReach(
+                        deferred.targetUuid(),
+                        deferred.attackNanos(),
+                        deferred.flagData(),
+                        deferred.remainingUpdates() - 1
+                ));
+            }
+        }
+        deferredPmaReachChecks.clear();
+        deferredPmaReachChecks.addAll(remaining);
+    }
+
+    private boolean consumePmaPaperRewindRescue(UUID targetUuid, long attackNanos) {
+        long sequence = PmaPaperCompat.matchingRewindRescueSequenceAfter(player, targetUuid, attackNanos);
+        if (sequence <= lastConsumedPmaRewindSequence) {
+            return false;
+        }
+        lastConsumedPmaRewindSequence = sequence;
+        return true;
+    }
+
+    private boolean isPmaPaperReachCandidate(PacketEntity reachEntity, InteractionData interactionData) {
+        return pmaPaperRewindCompat
+                && interactionData.attackNanos != Long.MIN_VALUE
+                && reachEntity.getType() == EntityTypes.PLAYER
+                && reachEntity.getUuid() != null
+                && PmaPaperCompat.isAvailable()
+                && PmaPaperCompat.isHitRewindEnabled();
+    }
+
+    private ReachFlagData createReachFlagData(PacketEntity reachEntity, CheckResult result) {
+        int typeId = Math.max(0, reachEntity.getType().getId(PacketEvents.getAPI().getServerManager().getVersion().toClientVersion()));
+        Integer size = reachEntity instanceof PacketEntitySizeable sizeable ? sizeable.size : null;
+        return new ReachFlagData(result, typeId, reachEntity.getType().getName().getKey(), size);
+    }
+
+    private void flagReach(ReachFlagData data) {
+        flag(
+                V.write(verbose()).f64(data.result.minDistance()).uint(data.typeId),
+                () -> {
+                    String added = ", type=" + data.typeName;
+                    if (data.size != null) {
+                        added += ", size=" + data.size;
+                    }
+                    return data.result.verbose() + added;
+                });
     }
 
     @NotNull
@@ -374,6 +472,9 @@ public class Reach extends Check implements PacketReceiveListener {
     @Override
     public void onReload(@NotNull ConfigManager config) {
         this.cancelImpossibleHits = config.getBooleanElse("Reach.block-impossible-hits", true);
+        this.pmaPaperRewindCompat = config.getBooleanElse("Reach.pmapaper-rewind-compat", true);
+        this.pmaPaperRewindWaitUpdates = Math.max(1, Math.min(3,
+                config.getIntElse("Reach.pmapaper-rewind-wait-updates", 2)));
         this.threshold = config.getDoubleElse("Reach.threshold", 0.0005);
     }
 
@@ -400,5 +501,11 @@ public class Reach extends Check implements PacketReceiveListener {
     }
 
     private record InteractionData(double x, double y, double z, boolean hasAttackRange,
-                                   float maxReach, float hitboxMargin, Vector3dm attackRangeMovement) {}
+                                   float maxReach, float hitboxMargin, Vector3dm attackRangeMovement,
+                                   long attackNanos) {}
+
+    private record ReachFlagData(CheckResult result, int typeId, String typeName, Integer size) {}
+
+    private record DeferredPmaReach(UUID targetUuid, long attackNanos, ReachFlagData flagData,
+                                    int remainingUpdates) {}
 }

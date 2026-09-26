@@ -1,16 +1,19 @@
 package ac.grim.grimac.checks.impl.groundspoof;
 
+import ac.grim.grimac.api.config.ConfigManager;
 import ac.grim.grimac.checks.Check;
 import ac.grim.grimac.checks.CheckData;
 import ac.grim.grimac.checks.type.PacketReceiveListener;
 import ac.grim.grimac.player.GrimPlayer;
 import ac.grim.grimac.predictionengine.GhostBlockDetector;
+import ac.grim.grimac.utils.anticheat.PmaPaperCompat;
 import ac.grim.grimac.utils.collisions.datatypes.SimpleCollisionBox;
 import ac.grim.grimac.utils.nmsutil.Collisions;
 import ac.grim.grimac.utils.nmsutil.GetBoundingBox;
 import com.github.retrooper.packetevents.event.PacketReceiveEvent;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerFlying;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -21,6 +24,7 @@ import java.util.List;
 public class NoFall extends Check implements PacketReceiveListener {
 
     public boolean flipPlayerGroundStatus = false;
+    private double pmaPaperGroundTolerance = 0.03;
 
     public NoFall(GrimPlayer player) {
         super(player);
@@ -76,13 +80,47 @@ public class NoFall extends Check implements PacketReceiveListener {
     }
 
     private boolean isNearGround(boolean onGround) {
-        if (onGround) {
-            SimpleCollisionBox feetBB = GetBoundingBox.getBoundingBoxFromPosAndSize(player, player.x, player.y, player.z, 0.6f, 0.001f);
-            feetBB.expand(player.getMovementThreshold()); // Movement threshold can be in any direction
-
-            return checkForBoxes(feetBB);
+        if (!onGround) {
+            return true;
         }
-        return true;
+
+        SimpleCollisionBox feetBB = createFeetBox();
+        if (checkForBoxes(feetBB)) {
+            return true;
+        }
+
+        return applyPmaPaperGroundTolerance(feetBB);
+    }
+
+    public boolean isNearGroundWithPmaPaperGrace() {
+        if (!PmaPaperCompat.isPmaPaper() || pmaPaperGroundTolerance <= 0.0) {
+            return false;
+        }
+
+        SimpleCollisionBox feetBB = createFeetBox();
+        if (checkForBoxes(feetBB)) {
+            return false;
+        }
+
+        return applyPmaPaperGroundTolerance(feetBB);
+    }
+
+    private SimpleCollisionBox createFeetBox() {
+        SimpleCollisionBox feetBB = GetBoundingBox.getBoundingBoxFromPosAndSize(player, player.x, player.y, player.z, 0.6f, 0.001f);
+        feetBB.expand(player.getMovementThreshold()); // Movement threshold can be in any direction
+        return feetBB;
+    }
+
+    private boolean applyPmaPaperGroundTolerance(SimpleCollisionBox feetBB) {
+        if (!PmaPaperCompat.isPmaPaper() || pmaPaperGroundTolerance <= 0.0) {
+            return false;
+        }
+
+        // PmaPaper can deliver combat feedback immediately around the landing edge.
+        // Extend only downward, never horizontally or upward, so sustained airborne
+        // ground spoofing remains fully detectable.
+        feetBB.expandMin(0.0, -pmaPaperGroundTolerance, 0.0);
+        return checkForBoxes(feetBB);
     }
 
     private boolean checkForBoxes(SimpleCollisionBox playerBB) {
@@ -96,5 +134,11 @@ public class NoFall extends Check implements PacketReceiveListener {
         }
 
         return player.compensatedWorld.isNearHardEntity(playerBB.copy().expand(4));
+    }
+
+    @Override
+    public void onReload(@NotNull ConfigManager config) {
+        pmaPaperGroundTolerance = Math.max(0.0, Math.min(0.08,
+                config.getDoubleElse("NoFall.pmapaper-ground-tolerance", 0.03)));
     }
 }

@@ -5,9 +5,11 @@ import ac.grim.grimac.checks.Check;
 import ac.grim.grimac.checks.CheckData;
 import ac.grim.grimac.checks.type.PrePredictionPacketReceiveListener;
 import ac.grim.grimac.player.GrimPlayer;
+import ac.grim.grimac.utils.anticheat.PmaPaperCompat;
 import com.github.retrooper.packetevents.event.PacketReceiveEvent;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPong;
 import org.jetbrains.annotations.NotNull;
 
 @CheckData(name = "Timer", stableKey = "grim.timer.timer", configName = "TimerA", description = "The players game is running faster than normal", setback = 10)
@@ -57,7 +59,7 @@ public class Timer extends Check implements PrePredictionPacketReceiveListener {
 
     @Override
     public void onPrePredictionPacketReceive(final PacketReceiveEvent event) {
-        if (hasGottenMovementAfterTransaction && checkForTransaction(event.getPacketType())) {
+        if (hasGottenMovementAfterTransaction && checkForClockTransaction(event)) {
             knownPlayerClockTime = lastMovementPlayerClock;
             lastMovementPlayerClock = player.getPlayerClockAtLeast();
             hasGottenMovementAfterTransaction = false;
@@ -94,6 +96,23 @@ public class Timer extends Check implements PrePredictionPacketReceiveListener {
 
     protected void limitFallBehind() {
         timerBalanceRealTime = Math.max(timerBalanceRealTime, lastMovementPlayerClock - clockDrift);
+    }
+
+    private boolean checkForClockTransaction(PacketReceiveEvent event) {
+        if (!checkForTransaction(event.getPacketType())) {
+            return false;
+        }
+
+        if (event.getPacketType() == PacketType.Play.Client.PONG) {
+            int id = new WrapperPlayClientPong(event).getId();
+            // PmaPaper samples RTT with its own 0x504Dxxxx ping IDs. They are not
+            // Grim transactions and must not move Timer's player-clock anchor.
+            if (PmaPaperCompat.isPmaPaperFastPingPong(id)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public boolean checkForTransaction(PacketTypeCommon packetType) {
