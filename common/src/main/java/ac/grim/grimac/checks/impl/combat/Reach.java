@@ -69,7 +69,7 @@ public class Reach extends Check implements PacketReceiveListener {
     // Only one flag per reach attack, per entity, per tick.
     // We store position because lastX isn't reliable on teleports.
     private final Int2ObjectMap<InteractionData> playerAttackQueue = new Int2ObjectOpenHashMap<>();
-    private final Int2ObjectMap<DeferredPmaReach> deferredPmaReachChecks = new Int2ObjectOpenHashMap<>();
+    private final List<DeferredPmaReach> deferredPmaReachChecks = new ArrayList<>();
     private boolean cancelImpossibleHits;
     private boolean pmaPaperRewindCompat;
     private int pmaPaperRewindWaitUpdates = 2;
@@ -269,9 +269,9 @@ public class Reach extends Check implements PacketReceiveListener {
                         UUID targetUuid = reachEntity.getUuid();
                         if (!consumePmaPaperRewindRescue(targetUuid, interactionData.attackNanos)) {
                             // PacketEvents observes the attack before PmaPaper's main-thread
-                            // range decision. Delay only this suspicious Reach result by one
-                            // movement update so the read-only rescue marker can become visible.
-                            deferredPmaReachChecks.put(attack.getIntKey(), new DeferredPmaReach(
+                            // range decision. Keep each suspicious attack independently so rapid
+                            // follow-up hits cannot overwrite an older deferred verdict.
+                            deferredPmaReachChecks.add(new DeferredPmaReach(
                                     targetUuid,
                                     interactionData.attackNanos,
                                     flagData,
@@ -296,26 +296,25 @@ public class Reach extends Check implements PacketReceiveListener {
     }
 
     private void processDeferredPmaReachChecks() {
-        Int2ObjectMap<DeferredPmaReach> remaining = new Int2ObjectOpenHashMap<>();
-        for (Int2ObjectMap.Entry<DeferredPmaReach> entry : deferredPmaReachChecks.int2ObjectEntrySet()) {
-            DeferredPmaReach deferred = entry.getValue();
-            if (consumePmaPaperRewindRescue(deferred.targetUuid, deferred.attackNanos)) {
+        List<DeferredPmaReach> remaining = new ArrayList<>(deferredPmaReachChecks.size());
+        for (DeferredPmaReach deferred : deferredPmaReachChecks) {
+            if (consumePmaPaperRewindRescue(deferred.targetUuid(), deferred.attackNanos())) {
                 continue;
             }
 
-            if (deferred.remainingUpdates <= 1) {
-                flagReach(deferred.flagData);
+            if (deferred.remainingUpdates() <= 1) {
+                flagReach(deferred.flagData());
             } else {
-                remaining.put(entry.getIntKey(), new DeferredPmaReach(
-                        deferred.targetUuid,
-                        deferred.attackNanos,
-                        deferred.flagData,
-                        deferred.remainingUpdates - 1
+                remaining.add(new DeferredPmaReach(
+                        deferred.targetUuid(),
+                        deferred.attackNanos(),
+                        deferred.flagData(),
+                        deferred.remainingUpdates() - 1
                 ));
             }
         }
         deferredPmaReachChecks.clear();
-        deferredPmaReachChecks.putAll(remaining);
+        deferredPmaReachChecks.addAll(remaining);
     }
 
     private boolean consumePmaPaperRewindRescue(UUID targetUuid, long attackNanos) {
