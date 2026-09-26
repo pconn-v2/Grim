@@ -72,6 +72,7 @@ public class Reach extends Check implements PacketReceiveListener {
     private final Int2ObjectMap<DeferredPmaReach> deferredPmaReachChecks = new Int2ObjectOpenHashMap<>();
     private boolean cancelImpossibleHits;
     private boolean pmaPaperRewindCompat;
+    private int pmaPaperRewindWaitUpdates = 2;
     private long lastConsumedPmaRewindSequence = -1L;
     private double threshold;
     private double cancelBuffer; // For the next 4 hits after using reach, we aggressively cancel reach
@@ -273,7 +274,8 @@ public class Reach extends Check implements PacketReceiveListener {
                             deferredPmaReachChecks.put(attack.getIntKey(), new DeferredPmaReach(
                                     targetUuid,
                                     interactionData.attackNanos,
-                                    flagData
+                                    flagData,
+                                    pmaPaperRewindWaitUpdates
                             ));
                         }
                     } else {
@@ -294,12 +296,26 @@ public class Reach extends Check implements PacketReceiveListener {
     }
 
     private void processDeferredPmaReachChecks() {
-        for (DeferredPmaReach deferred : deferredPmaReachChecks.values()) {
-            if (!consumePmaPaperRewindRescue(deferred.targetUuid, deferred.attackNanos)) {
+        Int2ObjectMap<DeferredPmaReach> remaining = new Int2ObjectOpenHashMap<>();
+        for (Int2ObjectMap.Entry<DeferredPmaReach> entry : deferredPmaReachChecks.int2ObjectEntrySet()) {
+            DeferredPmaReach deferred = entry.getValue();
+            if (consumePmaPaperRewindRescue(deferred.targetUuid, deferred.attackNanos)) {
+                continue;
+            }
+
+            if (deferred.remainingUpdates <= 1) {
                 flagReach(deferred.flagData);
+            } else {
+                remaining.put(entry.getIntKey(), new DeferredPmaReach(
+                        deferred.targetUuid,
+                        deferred.attackNanos,
+                        deferred.flagData,
+                        deferred.remainingUpdates - 1
+                ));
             }
         }
         deferredPmaReachChecks.clear();
+        deferredPmaReachChecks.putAll(remaining);
     }
 
     private boolean consumePmaPaperRewindRescue(UUID targetUuid, long attackNanos) {
@@ -458,6 +474,8 @@ public class Reach extends Check implements PacketReceiveListener {
     public void onReload(@NotNull ConfigManager config) {
         this.cancelImpossibleHits = config.getBooleanElse("Reach.block-impossible-hits", true);
         this.pmaPaperRewindCompat = config.getBooleanElse("Reach.pmapaper-rewind-compat", true);
+        this.pmaPaperRewindWaitUpdates = Math.max(1, Math.min(3,
+                config.getIntElse("Reach.pmapaper-rewind-wait-updates", 2)));
         this.threshold = config.getDoubleElse("Reach.threshold", 0.0005);
     }
 
@@ -489,5 +507,6 @@ public class Reach extends Check implements PacketReceiveListener {
 
     private record ReachFlagData(CheckResult result, int typeId, String typeName, Integer size) {}
 
-    private record DeferredPmaReach(UUID targetUuid, long attackNanos, ReachFlagData flagData) {}
+    private record DeferredPmaReach(UUID targetUuid, long attackNanos, ReachFlagData flagData,
+                                    int remainingUpdates) {}
 }

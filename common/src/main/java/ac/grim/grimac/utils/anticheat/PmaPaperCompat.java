@@ -18,13 +18,24 @@ import java.util.concurrent.TimeUnit;
  */
 public final class PmaPaperCompat {
     private static final long MAX_RESCUE_AGE_NANOS = TimeUnit.SECONDS.toNanos(2);
+    private static final int FAST_PING_ID_MASK = 0xFFFF_0000;
+    private static final int FAST_PING_ID_PREFIX = 0x504D_0000;
     private static final @Nullable Bridge BRIDGE = Bridge.resolve();
+    private static final boolean PMA_PAPER_PRESENT = BRIDGE != null || hasClass("org.pmapaper.network.PlayPhasePingSampler");
 
     private PmaPaperCompat() {
     }
 
     public static boolean isAvailable() {
         return BRIDGE != null;
+    }
+
+    public static boolean isPmaPaper() {
+        return PMA_PAPER_PRESENT;
+    }
+
+    public static boolean isPmaPaperFastPingPong(int id) {
+        return PMA_PAPER_PRESENT && (id & FAST_PING_ID_MASK) == FAST_PING_ID_PREFIX;
     }
 
     public static boolean isHitRewindEnabled() {
@@ -45,6 +56,15 @@ public final class PmaPaperCompat {
 
         long age = System.nanoTime() - marker.nanoTime();
         return age >= 0L && age <= MAX_RESCUE_AGE_NANOS ? marker.sequence() : -1L;
+    }
+
+    private static boolean hasClass(String name) {
+        try {
+            Class.forName(name, false, PmaPaperCompat.class.getClassLoader());
+            return true;
+        } catch (ClassNotFoundException | LinkageError ignored) {
+            return false;
+        }
     }
 
     private record RewindMarker(long sequence, UUID targetUuid, long nanoTime) {
