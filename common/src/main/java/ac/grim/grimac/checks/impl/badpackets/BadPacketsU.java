@@ -37,8 +37,8 @@ public class BadPacketsU extends Check implements PreViaPacketReceiveListener {
         if (packet.getFaceId() != 255) return;
 
         // This packet is always sent at (-1, -1, -1) at (0, 0, 0) on the block
-        // except y gets wrapped?
-        final int expectedY = player.getClientVersion().isNewerThanOrEquals(ClientVersion.V_1_8) ? 4095 : 255;
+        // Decoder versions may expose 1.8's signed -1 sentinel as 4095 instead.
+        final boolean v18 = player.getClientVersion().isNewerThanOrEquals(ClientVersion.V_1_8);
 
         final boolean failedItemCheck = isEmpty(packet.getItemStack().orElse(null));
 
@@ -47,7 +47,7 @@ public class BadPacketsU extends Check implements PreViaPacketReceiveListener {
 
         if (failedItemCheck
                 || pos.x != -1
-                || pos.y != expectedY
+                || !LegacyUseItemSentinel.isValidY(pos.y, v18)
                 || pos.z != -1
                 || cursor.x != 0
                 || cursor.y != 0
