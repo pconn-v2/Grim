@@ -33,6 +33,9 @@ public class GroundSpoof extends Check implements PostPredictionListener {
 
         boolean claimed = player.clientClaimsLastOnGround;
         if (claimed != player.onGround) {
+            if (claimed && player.checkManager.getNoFall().isNearGroundWithPmaPaperGrace()) {
+                return;
+            }
             flagWithSetback(V.write(verbose()).bool(claimed));
             player.checkManager.getNoFall().flipPlayerGroundStatus = true;
         }
