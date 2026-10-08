@@ -258,19 +258,19 @@ public class Reach extends Check implements PacketReceiveListener {
 
             // A PmaPaper-rewound hit should not prime Grim's aggressive follow-up reach
             // cancellation buffer. The server still rejects genuinely impossible hits.
-            if (pmaPaperCandidate && result.type() == ResultType.REACH) {
+            if (pmaPaperCandidate && result.isFlag()) {
                 cancelBuffer = previousCancelBuffer;
             }
 
             switch (result.type()) {
-                case REACH -> {
+                case REACH, HITBOX -> {
                     ReachFlagData flagData = createReachFlagData(reachEntity, result);
                     if (pmaPaperCandidate) {
                         UUID targetUuid = reachEntity.getUuid();
                         if (!consumePmaPaperRewindRescue(targetUuid, interactionData.attackNanos)) {
-                            // PacketEvents observes the attack before PmaPaper's main-thread
-                            // range decision. Keep each suspicious attack independently so rapid
-                            // follow-up hits cannot overwrite an older deferred verdict.
+                            // PmaPaper can authorize either an out-of-range hit or a hit whose
+                            // historical victim box was outside the current look ray. Delay both
+                            // verdicts until its authoritative hit-rewind decision is visible.
                             deferredPmaReachChecks.add(new DeferredPmaReach(
                                     targetUuid,
                                     interactionData.attackNanos,
@@ -279,15 +279,8 @@ public class Reach extends Check implements PacketReceiveListener {
                             ));
                         }
                     } else {
-                        flagReach(flagData);
+                        flagReachOrHitbox(flagData);
                     }
-                }
-                case HITBOX -> {
-                    String added = "type=" + reachEntity.getType().getName().getKey();
-                    if (reachEntity instanceof PacketEntitySizeable sizeable) {
-                        added += ", size=" + sizeable.size;
-                    }
-                    player.checkManager.get(Hitboxes.class).flag(result.verbose() + added);
                 }
             }
         }
@@ -305,7 +298,7 @@ public class Reach extends Check implements PacketReceiveListener {
             }
 
             if (deferred.remainingUpdates() <= 1) {
-                flagReach(deferred.flagData());
+                flagReachOrHitbox(deferred.flagData());
             } else {
                 remaining.add(new DeferredPmaReach(
                         deferred.targetUuid(),
@@ -343,7 +336,16 @@ public class Reach extends Check implements PacketReceiveListener {
         return new ReachFlagData(result, typeId, reachEntity.getType().getName().getKey(), size);
     }
 
-    private void flagReach(ReachFlagData data) {
+    private void flagReachOrHitbox(ReachFlagData data) {
+        if (data.result.type() == ResultType.HITBOX) {
+            String details = "type=" + data.typeName;
+            if (data.size != null) {
+                details += ", size=" + data.size;
+            }
+            player.checkManager.get(Hitboxes.class).flag(data.result.verbose() + details);
+            return;
+        }
+
         flag(
                 V.write(verbose()).f64(data.result.minDistance()).uint(data.typeId),
                 () -> {
