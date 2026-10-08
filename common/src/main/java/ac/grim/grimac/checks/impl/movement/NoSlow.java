@@ -38,20 +38,16 @@ public class NoSlow extends Check implements PostPredictionListener {
                 if (flaggedLastTick) {
                     flagWithSetback();
                 }
-                flaggedLastTick = nextFailureState(true, true);
+                flaggedLastTick = NoSlowFailureState.next(true, true);
             } else {
                 reward();
-                flaggedLastTick = nextFailureState(true, false);
+                flaggedLastTick = NoSlowFailureState.next(true, false);
             }
         } else {
             // Item-use sessions must never share violation evidence.
-            flaggedLastTick = nextFailureState(false, false);
+            flaggedLastTick = NoSlowFailureState.next(false, false);
         }
         bestOffset = 1;
-    }
-
-    static boolean nextFailureState(boolean usingItem, boolean predictionFailed) {
-        return usingItem && predictionFailed;
     }
 
     public void handlePredictionAnalysis(double offset) {

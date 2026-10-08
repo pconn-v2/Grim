@@ -10,7 +10,7 @@ class NoSlowStateTest {
     private record Result(boolean shouldFlag, boolean nextFailed) {}
 
     private static Result tick(boolean previousFailed, boolean usingItem, boolean failedPrediction) {
-        boolean nextFailed = NoSlow.nextFailureState(usingItem, failedPrediction);
+        boolean nextFailed = NoSlowFailureState.next(usingItem, failedPrediction);
         return new Result(previousFailed && nextFailed, nextFailed);
     }
 

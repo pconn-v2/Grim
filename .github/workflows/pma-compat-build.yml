@@ -25,3 +25,10 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :common:test build --no-daemon --stacktrace
+      - name: Attach Bukkit test build
+        uses: actions/upload-artifact@v4
+        with:
+          name: pma-grim-bukkit
+          path: bukkit/build/libs/*.jar
+          retention-days: 7
+          if-no-files-found: warn

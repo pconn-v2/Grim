@@ -9,15 +9,15 @@ class BadPacketsUSentinelTest {
 
     @Test
     void legacyItemUseDecodingAcceptsSignedAndUnsignedEighteenSentinel() {
-        assertTrue(BadPacketsU.isValidLegacyUseItemY(-1, true));
-        assertTrue(BadPacketsU.isValidLegacyUseItemY(4095, true));
-        assertFalse(BadPacketsU.isValidLegacyUseItemY(0, true));
+        assertTrue(LegacyUseItemSentinel.isValidY(-1, true));
+        assertTrue(LegacyUseItemSentinel.isValidY(4095, true));
+        assertFalse(LegacyUseItemSentinel.isValidY(0, true));
     }
 
     @Test
     void seventeenRetainsItsOwnSentinel() {
-        assertTrue(BadPacketsU.isValidLegacyUseItemY(255, false));
-        assertFalse(BadPacketsU.isValidLegacyUseItemY(-1, false));
-        assertFalse(BadPacketsU.isValidLegacyUseItemY(4095, false));
+        assertTrue(LegacyUseItemSentinel.isValidY(255, false));
+        assertFalse(LegacyUseItemSentinel.isValidY(-1, false));
+        assertFalse(LegacyUseItemSentinel.isValidY(4095, false));
     }
 }

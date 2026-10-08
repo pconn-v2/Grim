@@ -47,7 +47,7 @@ public class BadPacketsU extends Check implements PreViaPacketReceiveListener {
 
         if (failedItemCheck
                 || pos.x != -1
-                || !isValidLegacyUseItemY(pos.y, v18)
+                || !LegacyUseItemSentinel.isValidY(pos.y, v18)
                 || pos.z != -1
                 || cursor.x != 0
                 || cursor.y != 0
@@ -62,10 +62,6 @@ public class BadPacketsU extends Check implements PreViaPacketReceiveListener {
                 event.setCancelled(true);
             }
         }
-    }
-
-    static boolean isValidLegacyUseItemY(int y, boolean v18) {
-        return v18 ? y == -1 || y == 4095 : y == 255;
     }
 
     private static boolean isEmpty(ItemStack itemStack) {
