@@ -5,6 +5,7 @@ import ac.grim.grimac.utils.data.packetentity.PacketEntity;
 import ac.grim.grimac.utils.data.packetentity.PacketEntityTrackXRot;
 import com.github.retrooper.packetevents.protocol.vector.positionpath.PositionPath;
 import lombok.RequiredArgsConstructor;
+import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 
 @RequiredArgsConstructor
 public final class EntityMovementTransaction implements Runnable {
@@ -36,7 +37,7 @@ public final class EntityMovementTransaction implements Runnable {
 
         if (receiver instanceof PacketEntityTrackXRot rotation && yaw != null) {
             rotation.packetYaw = yaw;
-            rotation.steps = receiver.isBoat ? 10 : 3;
+            rotation.steps = receiver.isBoat && player.getClientVersion().isOlderThan(ClientVersion.V_1_21_2) ? 10 : 3;
         }
 
         receiver.onFirstTransaction(relative, hasPos, x, y, z, yaw, pitch, player, path, positionSync, transaction);

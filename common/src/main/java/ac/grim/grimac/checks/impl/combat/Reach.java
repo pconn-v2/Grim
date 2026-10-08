@@ -296,6 +296,8 @@ public class Reach extends Check implements PacketReceiveListener {
     }
 
     private void processDeferredPmaReachChecks() {
+        if (deferredPmaReachChecks.isEmpty()) return;
+
         List<DeferredPmaReach> remaining = new ArrayList<>(deferredPmaReachChecks.size());
         for (DeferredPmaReach deferred : deferredPmaReachChecks) {
             if (consumePmaPaperRewindRescue(deferred.targetUuid(), deferred.attackNanos())) {
