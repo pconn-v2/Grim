@@ -49,9 +49,7 @@ import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 
 // You may not copy the check unless you are licensed under GPL
@@ -264,17 +262,21 @@ public class Reach extends Check implements PacketReceiveListener {
         double minDistance = Double.MAX_VALUE;
 
         // https://bugs.mojang.com/browse/MC-67665
-        List<Vector3dm> possibleLookDirs = new ArrayList<>(Collections.singletonList(ReachUtils.getLook(player, player.yaw, player.pitch)));
+        // PConn/Grim: at most three look vectors are possible. Avoid allocating an ArrayList
+        // for every reach decision while preserving the exact existing direction order.
+        final Vector3dm currentLook = ReachUtils.getLook(player, player.yaw, player.pitch);
+        Vector3dm previousYawLook = null;
+        Vector3dm previousYawPitchLook = null;
 
         // If we are a tick behind, we don't know their next look so don't bother doing this
         if (!isPrediction) {
             // 1.7 players do not have any of these issues! They are always on the latest look vector
             if (player.getClientVersion().isNewerThanOrEquals(ClientVersion.V_1_8)) {
-                possibleLookDirs.add(ReachUtils.getLook(player, player.lastYaw, player.pitch));
+                previousYawLook = ReachUtils.getLook(player, player.lastYaw, player.pitch);
 
                 // 1.9+ players could be a tick behind because we don't get skipped ticks
                 if (player.getClientVersion().isNewerThanOrEquals(ClientVersion.V_1_9)) {
-                    possibleLookDirs.add(ReachUtils.getLook(player, player.lastYaw, player.lastPitch));
+                    previousYawPitchLook = ReachUtils.getLook(player, player.lastYaw, player.lastPitch);
                 }
             }
         }
@@ -283,7 +285,13 @@ public class Reach extends Check implements PacketReceiveListener {
         final double distance = maxReach + 3;
 
         final double[] possibleEyeHeights = player.getPossibleEyeHeights();
-        for (Vector3dm lookVec : possibleLookDirs) {
+        for (int lookIndex = 0; lookIndex < 3; ++lookIndex) {
+            final Vector3dm lookVec = switch (lookIndex) {
+                case 0 -> currentLook;
+                case 1 -> previousYawLook;
+                default -> previousYawPitchLook;
+            };
+            if (lookVec == null) continue;
             lookVec.multiply(distance);
 
             for (double eye : possibleEyeHeights) {
